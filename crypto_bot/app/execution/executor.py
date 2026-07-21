@@ -11,31 +11,32 @@ class Executor:
         self.paper_balance = settings.PAPER_TRADING_BALANCE
         self.notifier = notifier
 
-    def execute_order(self, symbol: str, side: str, quantity: float, price: float):
+    def execute_order(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
         if self.mode == "paper":
-            self._paper_trade(symbol, side, quantity, price)
+            self._paper_trade(symbol, side, quantity, price, sl, tp)
         else:
-            self._live_trade(symbol, side, quantity, price)
+            self._live_trade(symbol, side, quantity, price, sl, tp)
 
-    def _paper_trade(self, symbol: str, side: str, quantity: float, price: float):
+    def _paper_trade(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
         db = SessionLocal()
         try:
-            logger.info(f"PAPER TRADE: {side} {quantity} {symbol} @ {price}")
-
-            # Record the trade
+            logger.info(f"PAPER TRADE: {side} {quantity} {symbol} @ {price} | SL: {sl} | TP: {tp}")
+            
             trade = Trade(
                 symbol=symbol,
                 side=side,
                 entry_price=price,
                 quantity=quantity,
-                status="open"
+                status="open",
+                stop_loss=sl,       
+                take_profit=tp      
             )
             db.add(trade)
             db.commit()
-
+            
             if self.notifier:
-                self.notifier.send_message(f"🚨 PAPER TRADE ENTRY: {side} {symbol} @ {price}")
-
+                self.notifier.send_message(f"🚨 PAPER TRADE ENTRY: {side} {symbol}\nPreço: {price}\nSL: {sl}\nTP: {tp}")
+                
         except Exception as e:
             logger.error(f"Error in paper trade execution: {e}")
             db.rollback()
@@ -74,3 +75,25 @@ class Executor:
         # Placeholder for live execution via CCXT
         logger.warning("Live trading is not fully implemented yet.")
         pass
+
+def update_stop_loss(self, trade_id: int, new_sl: float):
+        """Atualiza o Stop Loss no banco de dados."""
+        db = SessionLocal()
+        try:
+            trade = db.query(Trade).filter(Trade.id == trade_id).first()
+            if not trade:
+                return
+            
+            trade.stop_loss = new_sl
+            db.commit()
+            logger.info(f"🛡️ Trailing Stop Atualizado: {trade.symbol} | Novo SL: {new_sl:.2f}")
+            
+            # Opcional: Enviar mensagem no Telegram a cada ajuste (pode gerar muito spam, cuidado)
+            # if self.notifier:
+            #     self.notifier.send_message(f"🛡️ Trailing Stop ajustado para {trade.symbol} em {new_sl:.2f}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao atualizar Stop Loss: {e}")
+            db.rollback()
+        finally:
+            db.close()
