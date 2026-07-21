@@ -18,6 +18,9 @@ class TrendFollowingStrategy(BaseStrategy):
         # 2. NOVO: Filtro de Volume (Média Móvel Simples de 20 períodos do Volume)
         df['SMA_Volume'] = ta.sma(df['volume'], length=20)
         
+        # NOVO: Indicador de Volatilidade (ATR de 14 períodos)
+        df['ATR'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+
         # Inicializa a coluna de sinal
         df['signal'] = 0
         

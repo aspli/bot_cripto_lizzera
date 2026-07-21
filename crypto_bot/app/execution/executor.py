@@ -75,3 +75,25 @@ class Executor:
         # Placeholder for live execution via CCXT
         logger.warning("Live trading is not fully implemented yet.")
         pass
+
+def update_stop_loss(self, trade_id: int, new_sl: float):
+        """Atualiza o Stop Loss no banco de dados."""
+        db = SessionLocal()
+        try:
+            trade = db.query(Trade).filter(Trade.id == trade_id).first()
+            if not trade:
+                return
+            
+            trade.stop_loss = new_sl
+            db.commit()
+            logger.info(f"🛡️ Trailing Stop Atualizado: {trade.symbol} | Novo SL: {new_sl:.2f}")
+            
+            # Opcional: Enviar mensagem no Telegram a cada ajuste (pode gerar muito spam, cuidado)
+            # if self.notifier:
+            #     self.notifier.send_message(f"🛡️ Trailing Stop ajustado para {trade.symbol} em {new_sl:.2f}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao atualizar Stop Loss: {e}")
+            db.rollback()
+        finally:
+            db.close()
