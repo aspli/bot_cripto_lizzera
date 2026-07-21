@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 def check_open_trades_sl_tp(executor, current_price, symbol):
-    """Verifica se o preço atual cruzou o Stop Loss ou Take Profit."""
+    """Verifica se o preço atual cruzou o Stop Loss ou Take Profit das ordens abertas."""
     db = SessionLocal()
     try:
         open_trades = db.query(Trade).filter(Trade.symbol == symbol, Trade.status == 'open').all()
@@ -28,16 +28,16 @@ def check_open_trades_sl_tp(executor, current_price, symbol):
         db.close()
 
 def manage_trailing_stops(executor, current_price, current_atr, symbol):
-    """Sobe o Stop Loss usando o ATR se a posição for lucrativa."""
+    """Sobe o Stop Loss usando o ATR se a posição for lucrativa (Trailing Stop)."""
     db = SessionLocal()
     try:
         open_trades = db.query(Trade).filter(Trade.symbol == symbol, Trade.status == 'open').all()
         for trade in open_trades:
             if trade.side == 'buy':
-                # Distância padrão: Preço Atual - (2x a volatilidade do ATR)
+                # Distância do Stop: Preço Atual - (2x a volatilidade do ATR)
                 novo_sl_potencial = current_price - (current_atr * 2)
                 
-                # Regra de Ouro do TS: O stop só pode SUBIR
+                # Regra de Ouro: O stop só pode SUBIR
                 if trade.stop_loss and novo_sl_potencial > trade.stop_loss:
                     executor.update_stop_loss(trade.id, novo_sl_potencial)
     finally:
@@ -54,54 +54,78 @@ def main():
     executor = Executor(notifier=notifier)
 
     logger.info("Bot started successfully. Listening for signals...")
-    notifier.send_message("🤖 Crypto Bot com ATR Trailing Stop iniciado.")
+    notifier.send_message("🤖 Crypto Bot de Alta Performance iniciado.")
 
     while True:
         try:
+            logger.info("Sincronizando dados com a Exchange...")
             collector.update_database()
             
             for symbol in settings.SYMBOLS:
+                # Buscamos as últimas 250 velas do timeframe configurado
                 df = collector.fetch_ohlcv(symbol, '1h', limit=250)
                 if df.empty:
                     continue
                 
                 df_signals = strategy.generate_signals(df)
                 
-                # Preços e Sinais
-                current_signal = df_signals.iloc[-2]['signal']
-                previous_signal = df_signals.iloc[-3]['signal']
-                current_price = df_signals.iloc[-1]['close'] 
-                current_atr = df_signals.iloc[-1]['ATR'] # Pegamos a volatilidade do momento
+                # Extração de Preços e Volatilidade (Convertidos para float nativo para evitar erro do Numpy)
+                current_price = float(df_signals.iloc[-1]['close']) 
+                current_low = float(df_signals.iloc[-1]['low'])
+                current_high = float(df_signals.iloc[-1]['high'])
                 
-                # 1. VERIFICAR SL/TP E ATUALIZAR TRAILING STOP
+                # Proteção caso o ATR retorne NaN nas primeiras velas
+                current_atr = float(df_signals.iloc[-1]['ATR']) if not df_signals['ATR'].isna().iloc[-1] else 0.0
+                
+                # Extração dos Sinais da última e penúltima velas FECHADAS (Evita Repainting)
+                current_signal = int(df_signals.iloc[-2]['signal'])
+                previous_signal = int(df_signals.iloc[-3]['signal'])
+                
+                # ==========================================
+                # 1. GERENCIAMENTO DE ORDENS PENDENTES (LIMIT)
+                # ==========================================
+                # Verifica se o preço atingiu alguma Limit Order (Ex: Grid Trading)
+                if hasattr(executor, 'check_pending_orders'):
+                    executor.check_pending_orders(current_low, current_high)
+                
+                # ==========================================
+                # 2. GERENCIAMENTO DE RISCO E PROTEÇÃO (MARKET)
+                # ==========================================
                 check_open_trades_sl_tp(executor, current_price, symbol)
-                manage_trailing_stops(executor, current_price, current_atr, symbol)
+                if current_atr > 0:
+                    manage_trailing_stops(executor, current_price, current_atr, symbol)
                 
-                # 2. AVALIAR NOVOS SINAIS (Apenas na transição)
+                # ==========================================
+                # 3. AVALIAÇÃO DE NOVAS ENTRADAS (TRANSIÇÃO)
+                # ==========================================
+                # Só entra na OP se o sinal virou 1 AGORA (Edge Trigger)
                 if previous_signal != 1 and current_signal == 1:
                     if risk_manager.can_open_trade(symbol):
-                        logger.info(f"🟢 BUY signal para {symbol}")
-                        qty = risk_manager.calculate_position_size(settings.PAPER_TRADING_BALANCE, current_price) / current_price
+                        logger.info(f"🟢 GATILHO DE COMPRA: Sinal confirmado para {symbol}")
                         
-                        # O Stop inicial também pode ser definido pelo ATR aqui, ou manter o fixo do RiskManager
+                        qty = float(risk_manager.calculate_position_size(settings.PAPER_TRADING_BALANCE, current_price) / current_price)
                         sl, tp = risk_manager.calculate_sl_tp(current_price, "buy")
+                        
                         executor.execute_order(symbol, "buy", qty, current_price, sl, tp)
                 
+                # Só sai da OP se o sinal virou -1 AGORA
                 elif previous_signal != -1 and current_signal == -1:
                     db = SessionLocal()
                     try:
                         open_trades = db.query(Trade).filter(Trade.symbol == symbol, Trade.status == 'open', Trade.side == 'buy').all()
                         for trade in open_trades:
-                            logger.info(f"Fechando posição de {symbol} por reversão de tendência.")
+                            logger.info(f"🔴 GATILHO DE VENDA: Fechando posição de {symbol} por reversão de tendência.")
                             executor.close_order(trade.id, current_price)
                     finally:
                         db.close()
             
-            # Correção de eficiência: aguardar até o próximo ciclo
+            # Aguarda o próximo ciclo
+            logger.info("Ciclo concluído. Dormindo por 60 segundos...")
             time.sleep(60)
             
         except KeyboardInterrupt:
             logger.info("Bot stopped by user.")
+            notifier.send_message("🛑 Crypto Bot parado manualmente.")
             break
         except Exception as e:
             logger.error(f"Error in main loop: {e}")
