@@ -36,7 +36,7 @@ def main():
                     continue
 
                 df_signals = strategy.generate_signals(df)
-                latest_signal = df_signals.iloc[-1]['signal']
+                latest_signal = df_signals.iloc[-2]['signal']
                 latest_price = df_signals.iloc[-1]['close']
 
                 if latest_signal == 1:
