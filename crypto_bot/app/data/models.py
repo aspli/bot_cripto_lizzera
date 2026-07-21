@@ -23,11 +23,17 @@ class Trade(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     symbol = Column(String, index=True)
-    side = Column(String) # "buy" or "sell"
+    side = Column(String) 
+
+    order_type = Column(String, default="market") 
+    exchange_order_id = Column(String, nullable=True)
+
     entry_price = Column(Float)
     exit_price = Column(Float, nullable=True)
     quantity = Column(Float)
-    status = Column(String) # "open", "closed"
+
+    status = Column(String) 
+    
     pnl = Column(Float, nullable=True)
     entry_time = Column(DateTime, default=datetime.datetime.utcnow)
     exit_time = Column(DateTime, nullable=True)

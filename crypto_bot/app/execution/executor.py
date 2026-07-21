@@ -12,6 +12,13 @@ class Executor:
         self.notifier = notifier
 
     def execute_order(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
+        quantity = float(quantity)
+        price = float(price)
+        if sl is not None:
+            sl = float(sl)
+        if tp is not None:
+            tp = float(tp)
+            
         if self.mode == "paper":
             self._paper_trade(symbol, side, quantity, price, sl, tp)
         else:
@@ -39,6 +46,28 @@ class Executor:
                 
         except Exception as e:
             logger.error(f"Error in paper trade execution: {e}")
+            db.rollback()
+        finally:
+            db.close()
+            
+    def update_stop_loss(self, trade_id: int, new_sl: float):
+        new_sl = float(new_sl)
+        db = SessionLocal()
+        try:
+            trade = db.query(Trade).filter(Trade.id == trade_id).first()
+            if not trade:
+                return
+            
+            trade.stop_loss = new_sl
+            db.commit()
+            logger.info(f"🛡️ Trailing Stop Atualizado: {trade.symbol} | Novo SL: {new_sl:.2f}")
+            
+            # Opcional: Enviar mensagem no Telegram a cada ajuste (pode gerar muito spam, cuidado)
+            # if self.notifier:
+            #     self.notifier.send_message(f"🛡️ Trailing Stop ajustado para {trade.symbol} em {new_sl:.2f}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao atualizar Stop Loss: {e}")
             db.rollback()
         finally:
             db.close()
@@ -76,24 +105,66 @@ class Executor:
         logger.warning("Live trading is not fully implemented yet.")
         pass
 
-def update_stop_loss(self, trade_id: int, new_sl: float):
-        """Atualiza o Stop Loss no banco de dados."""
+    def place_limit_order(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
+        """Envia uma ordem limite para o Livro de Ofertas (Status inicial: pending)."""
+        quantity = float(quantity)
+        price = float(price)
+        if sl: sl = float(sl)
+        if tp: tp = float(tp)
+        
         db = SessionLocal()
         try:
-            trade = db.query(Trade).filter(Trade.id == trade_id).first()
-            if not trade:
-                return
+            logger.info(f"⏳ PENDING LIMIT ORDER: {side} {quantity} {symbol} @ {price}")
             
-            trade.stop_loss = new_sl
+            # No modo Live, aqui você chamaria: self.exchange.create_limit_order(...)
+            # e salvaria o ID retornado em exchange_order_id.
+            
+            trade = Trade(
+                symbol=symbol,
+                side=side,
+                order_type="limit",
+                entry_price=price,
+                quantity=quantity,
+                status="pending", # Nasce pendente
+                stop_loss=sl,
+                take_profit=tp
+            )
+            db.add(trade)
             db.commit()
-            logger.info(f"🛡️ Trailing Stop Atualizado: {trade.symbol} | Novo SL: {new_sl:.2f}")
             
-            # Opcional: Enviar mensagem no Telegram a cada ajuste (pode gerar muito spam, cuidado)
-            # if self.notifier:
-            #     self.notifier.send_message(f"🛡️ Trailing Stop ajustado para {trade.symbol} em {new_sl:.2f}")
-                
         except Exception as e:
-            logger.error(f"Erro ao atualizar Stop Loss: {e}")
+            logger.error(f"Erro ao criar ordem limite: {e}")
             db.rollback()
+        finally:
+            db.close()
+
+    def check_pending_orders(self, current_low: float, current_high: float):
+        """
+        Verifica se o preço atual cruzou as ordens pendentes.
+        No Live, isso seria feito consultando a API: self.exchange.fetch_order(id)
+        """
+        db = SessionLocal()
+        try:
+            pending_trades = db.query(Trade).filter(Trade.status == 'pending').all()
+            for trade in pending_trades:
+                filled = False
+                
+                # Se for compra limite, o preço tem que cair até o alvo ou mais baixo
+                if trade.side == 'buy' and current_low <= trade.entry_price:
+                    filled = True
+                
+                # Se for venda limite, o preço tem que subir até o alvo ou mais alto
+                elif trade.side == 'sell' and current_high >= trade.entry_price:
+                    filled = True
+                    
+                if filled:
+                    trade.status = "open"
+                    trade.entry_time = datetime.datetime.utcnow()
+                    logger.info(f"✅ LIMIT ORDER FILLED: {trade.side} {trade.symbol} @ {trade.entry_price}")
+                    
+                    if self.notifier:
+                        self.notifier.send_message(f"✅ Ordem Limite Executada: {trade.side} {trade.symbol} a {trade.entry_price}")
+            
+            db.commit()
         finally:
             db.close()
