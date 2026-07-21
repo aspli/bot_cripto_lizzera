@@ -11,31 +11,32 @@ class Executor:
         self.paper_balance = settings.PAPER_TRADING_BALANCE
         self.notifier = notifier
 
-    def execute_order(self, symbol: str, side: str, quantity: float, price: float):
+    def execute_order(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
         if self.mode == "paper":
-            self._paper_trade(symbol, side, quantity, price)
+            self._paper_trade(symbol, side, quantity, price, sl, tp)
         else:
-            self._live_trade(symbol, side, quantity, price)
+            self._live_trade(symbol, side, quantity, price, sl, tp)
 
-    def _paper_trade(self, symbol: str, side: str, quantity: float, price: float):
+    def _paper_trade(self, symbol: str, side: str, quantity: float, price: float, sl: float = None, tp: float = None):
         db = SessionLocal()
         try:
-            logger.info(f"PAPER TRADE: {side} {quantity} {symbol} @ {price}")
-
-            # Record the trade
+            logger.info(f"PAPER TRADE: {side} {quantity} {symbol} @ {price} | SL: {sl} | TP: {tp}")
+            
             trade = Trade(
                 symbol=symbol,
                 side=side,
                 entry_price=price,
                 quantity=quantity,
-                status="open"
+                status="open",
+                stop_loss=sl,       
+                take_profit=tp      
             )
             db.add(trade)
             db.commit()
-
+            
             if self.notifier:
-                self.notifier.send_message(f"🚨 PAPER TRADE ENTRY: {side} {symbol} @ {price}")
-
+                self.notifier.send_message(f"🚨 PAPER TRADE ENTRY: {side} {symbol}\nPreço: {price}\nSL: {sl}\nTP: {tp}")
+                
         except Exception as e:
             logger.error(f"Error in paper trade execution: {e}")
             db.rollback()

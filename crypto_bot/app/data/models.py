@@ -31,6 +31,8 @@ class Trade(Base):
     pnl = Column(Float, nullable=True)
     entry_time = Column(DateTime, default=datetime.datetime.utcnow)
     exit_time = Column(DateTime, nullable=True)
+    stop_loss = Column(Float, nullable=True)
+    take_profit = Column(Float, nullable=True)
 
 # Database setup
 engine = create_engine(settings.DATABASE_URL)
